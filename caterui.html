@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Modern Dark GUI – Draggable Sections</title>
+  <style>
+    :root {
+      --blue-500:#3b82f6; --blue-600:#2563eb; --blue-700:#1d4ed8;
+      --slate-900:#0f172a; --slate-800:#1e293b; --slate-700:#334155;
+      --text-main:#f1f5f9; --text-muted:#94a3b8;
+      --surface:linear-gradient(145deg,rgba(30,41,59,.96) 0%,rgba(30,41,59,.92) 60%,rgba(37,99,235,.12) 100%);
+      --shadow:0 2px 4px rgba(0,0,0,.32),0 6px 18px rgba(59,130,246,.22),0 12px 26px rgba(37,99,235,.18);
+    }
+
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{
+      background:var(--slate-900);color:var(--text-main);font-family:"Segoe UI",system-ui,sans-serif;
+      height:100vh;overflow:hidden;position:relative;
+    }
+
+    /* draggable card */
+    .container{
+      position:absolute;top:40px;left:40px;width:380px;background:var(--surface);
+      border:1px solid rgba(148,163,184,.25);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);
+      transition:box-shadow .25s,transform .25s;
+    }
+    .container:hover{box-shadow:0 4px 12px rgba(0,0,0,.50),0 14px 40px rgba(59,130,246,.28)}
+
+    .section-header{padding:20px 24px;display:flex;justify-content:space-between;align-items:center;cursor:grab;
+      background:linear-gradient(140deg,rgba(15,23,42,1) 0%,rgba(30,41,59,1) 60%,rgba(59,130,246,.35) 100%);
+      user-select:none;transition:background .3s;}
+    .section-header:active{cursor:grabbing}
+    .section-title{font-weight:600;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .chevron{font-size:18px;transition:transform .3s}
+
+    .settings-panel{display:none;padding:24px 28px 32px;animation:fade .3s ease forwards}
+    .setting{margin-bottom:26px}
+    .setting label{display:block;margin-bottom:7px;font-size:14px;color:var(--text-muted)}
+    .value-label{font-size:13px;color:var(--blue-500)}
+
+    input[type=range]{width:100%;height:6px;-webkit-appearance:none;background:transparent;cursor:pointer}
+    input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(90deg,var(--blue-600) 0%,var(--blue-700) 100%)}
+    input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:linear-gradient(90deg,var(--blue-600) 0%,var(--blue-700) 100%)}
+    input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--text-main);border:3px solid var(--blue-600);margin-top:-6px;transition:border-color .2s,transform .2s}
+    input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--text-main);border:3px solid var(--blue-600);transition:border-color .2s,transform .2s}
+    input[type=range]:hover::-webkit-slider-thumb,input[type=range]:hover::-moz-range-thumb{border-color:var(--blue-500);transform:scale(1.05)}
+    input[type=checkbox]{accent-color:var(--blue-600);width:18px;height:18px;margin-right:6px;cursor:pointer}
+
+    @keyframes fade{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
+    .context-menu{display:none;position:absolute;min-width:160px;background:var(--surface);border-radius:10px;
+      border:1px solid rgba(148,163,184,.25);box-shadow:var(--shadow);z-index:9999;animation:fade .18s ease forwards}
+    .context-item{padding:11px 18px;font-size:14px;color:var(--text-main);cursor:pointer;transition:background .2s}
+    .context-item:hover{background:rgba(59,130,246,.14)}
+
+    .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--surface);padding:12px 20px;
+      border:1px solid rgba(148,163,184,.25);border-radius:12px;box-shadow:var(--shadow);opacity:0;pointer-events:none}
+    .toast.show{animation:toastIn .3s forwards,toastOut .3s 2.6s forwards}
+    @keyframes toastIn{from{opacity:0;transform:translate(-50%,40px)}to{opacity:1;transform:translate(-50%,0)}}
+    @keyframes toastOut{to{opacity:0;transform:translate(-50%,40px)}}
+  </style>
+</head>
+<body>
+  <template id="template">
+    <div class="container" data-container>
+      <div class="section-header" data-header>
+        <span class="section-title" data-title>Test Section</span>
+        <span class="chevron" data-icon>▼</span>
+      </div>
+      <div class="settings-panel" data-panel>
+        <div class="setting">
+          <label>Intensity <span data-val class="value-label">20</span>%</label>
+          <input type="range" min="0" max="100" value="20" data-slider>
+        </div>
+        <div class="setting">
+          <label><input type="checkbox" data-check checked> Enable feature</label>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <div class="context-menu" id="menu">
+    <div class="context-item" data-action="rename">Rename</div>
+    <div class="context-item" data-action="duplicate">Duplicate</div>
+    <div class="context-item" data-action="delete">Delete</div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const tpl=document.getElementById('template');
+    const menu=document.getElementById('menu');
+    const toast=document.getElementById('toast');
+    let active=null; let zIndex=1;
+
+    const uuid=()=>crypto.randomUUID?.()||'id-'+Math.random().toString(36).slice(2);
+    const showToast=m=>{ toast.textContent=m; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'),3000); };
+
+    // Create first card
+    const first=tpl.content.firstElementChild.cloneNode(true);
+    document.body.append(first);
+    init(first);
+
+    function init(card){
+      const header=card.querySelector('[data-header]');
+      const panel =card.querySelector('[data-panel]');
+      const icon  =card.querySelector('[data-icon]');
+      const slider=card.querySelector('[data-slider]');
+      const check =card.querySelector('[data-check]');
+      const val   =card.querySelector('[data-val]');
+
+      // Style update based on controls
+      const baseGrad='linear-gradient(140deg,rgba(15,23,42,1) 0%,rgba(30,41,59,1) 60%,rgba(59,130,246,.35) 100%)';
+      const applyStyle=()=>{
+        val.textContent=slider.value;
+        const a=(slider.value/100).toFixed(2);
+        header.style.background=check.checked
+          ? `linear-gradient(140deg,rgba(59,130,246,${a}) 0%,rgba(37,99,235,${a}) 70%,rgba(30,41,59,1) 100%)`
+          : baseGrad;
+        header.style.opacity=check.checked ? 1 : .55;
+      };
+      slider.addEventListener('input',applyStyle);
+      check.addEventListener('change',applyStyle);
+      applyStyle();
+
+      // Toggle panel
+      header.addEventListener('click',e=>{
+        if(e.button!==0) return;
+        const open = panel.style.display==='block';
+        panel.style.display = open?'none':'block';
+        icon.style.transform = open?'rotate(0deg)':'rotate(180deg)';
+        menu.style.display='none';
+      });
+
+      // Context menu
+      header.addEventListener('contextmenu',e=>{
+        e.preventDefault();
+        active=card;
+        menu.style.display='block';
+        menu.style.left=`${e.pageX}px`;
+        menu.style.top=`${e.pageY}px`;
+        menu.style.zIndex=++zIndex;
+      });
+
+      // Draggable
+      let offsetX=0, offsetY=0, dragging=false;
+      header.addEventListener('mousedown',e=>{
+        if(e.button!==0) return;
+        dragging=true;
+        card.style.zIndex=++zIndex;
+        offsetX=e.clientX-card.offsetLeft;
+        offsetY=e.clientY-card.offsetTop;
+        document.addEventListener('mousemove',onMove);
+        document.addEventListener('mouseup',onUp);
+      });
+      function onMove(ev){
+        if(!dragging) return;
+        card.style.left = Math.max(0, Math.min(window.innerWidth-card.offsetWidth, ev.clientX-offsetX))+'px';
+        card.style.top  = Math.max(0, Math.min(window.innerHeight-card.offsetHeight, ev.clientY-offsetY))+'px';
+      }
+      function onUp(){
+        dragging=false;
+        document.removeEventListener('mousemove',onMove);
+        document.removeEventListener('mouseup',onUp);
+      }
+    }
+
+    // Context menu actions
+    menu.addEventListener('click',e=>{
+      const act=e.target.dataset.action;
+      if(!act||!active) return;
+      switch(act){
+        case 'rename': {
+          const t=active.querySelector('[data-title]');
+          const cur=t.textContent.trim();
+          const inp=document.createElement('input');
+          inp.value=cur;
+          inp.style.cssText='width:80%;background:transparent;border:1px solid rgba(148,163,184,.4);border-radius:6px;color:var(--text-main);padding:4px 8px';
+          t.replaceWith(inp);
+          inp.focus();
+          const done=()=>{ t.textContent=inp.value.trim()||cur; inp.replaceWith(t); showToast('Renamed'); };
+          inp.addEventListener('blur',done);
+          inp.addEventListener('keydown',ev=>ev.key==='Enter'&&inp.blur());
+          break;
+        }
+        case 'duplicate': {
+          const clone=active.cloneNode(true);
+          clone.style.left=(parseInt(active.style.left||0)+20)+'px';
+          clone.style.top =(parseInt(active.style.top ||0)+20)+'px';
+          clone.querySelectorAll('[data-slider]').forEach(el=>el.id=uuid());
+          clone.querySelectorAll('[data-check]').forEach(el=>el.id=uuid());
+          document.body.append(clone);
+          init(clone);
+          showToast('Duplicated');
+          break;
+        }
+        case 'delete': {
+          active.remove();
+          showToast('Deleted');
+          break;
+        }
+      }
+      menu.style.display='none';
+      active=null;
+    });
+
+    // Hide context menu on outside click
+    document.addEventListener('click',e=>{
+      if(!menu.contains(e.target) && e.button!==2) menu.style.display='none';
+    });
+  </script>
+</body>
+</html>
